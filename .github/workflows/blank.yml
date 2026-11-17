@@ -1,7 +1,7 @@
 name: Download GDAL from GISInternals
 on:
   push:
-    branches: [ "main" ]   # 仅当推送到 main 分支时触发
+    branches: [ "master" ]   # 仅当推送到 master 分支时触发
 jobs:
   download-and-extract:
     runs-on: ubuntu-latest  # 使用 GitHub 托管的最新版 Ubuntu 运行器
