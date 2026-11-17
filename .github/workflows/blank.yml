@@ -1,4 +1,4 @@
-name: Download GISInternals GDAL
+name: Download GISInternals GDAL (Fixed)
 
 on:
   workflow_dispatch:
@@ -21,52 +21,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 构造文件名与查询地址
+      - name: 构造文件名与直链
         id: vars
         run: |
           FILE="release-${{ github.event.inputs.build }}-x64-${{ github.event.inputs.version }}.zip"
-          QUERY="http://archive.gisinternals.com/query.html?content=filelist&file=${FILE}"
-          echo "file=$FILE"   >> "$GITHUB_OUTPUT"
-          echo "query=$QUERY" >> "$GITHUB_OUTPUT"
+          URL="https://download.gisinternals.com/sdk/downloads/${FILE}"
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "url=$URL"   >> "$GITHUB_OUTPUT"
           echo "目标文件: $FILE"
-          echo "查询地址: $QUERY"
+          echo "下载直链: $URL"
 
-      - name: 解析真实下载链接
-        id: resolve
-        run: |
-          curl -L --fail --retry 3 --retry-delay 5 -sS \
-            "${{ steps.vars.outputs.query }}" -o list.html
-
-          if file list.html | grep -qi 'zip archive'; then
-            echo "查询地址直接返回 ZIP，跳过解析"
-            mv list.html "${{ steps.vars.outputs.file }}"
-            echo "already_zip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          REAL_URL=$(grep -oE 'https?://[^"[:space:]]+\.zip' list.html | head -n 1)
-          if [ -z "$REAL_URL" ]; then
-            echo "未能从页面中解析出 ZIP 链接，页面片段如下："
-            head -n 50 list.html
-            exit 1
-          fi
-          echo "real_url=$REAL_URL" >> "$GITHUB_OUTPUT"
-          echo "already_zip=false" >> "$GITHUB_OUTPUT"
-          echo "解析到真实地址: $REAL_URL"
-
-      - name: 下载 ZIP
-        if: steps.resolve.outputs.already_zip != 'true'
+      - name: 直接下载 ZIP
         run: |
           curl -L --fail --retry 3 --retry-delay 5 \
             -o "${{ steps.vars.outputs.file }}" \
-            "${{ steps.resolve.outputs.real_url }}"
+            "${{ steps.vars.outputs.url }}"
           ls -lh "${{ steps.vars.outputs.file }}"
           file "${{ steps.vars.outputs.file }}"
 
       - name: 校验 ZIP 完整性
         run: |
           if ! unzip -t "${{ steps.vars.outputs.file }}" > /dev/null 2>&1; then
-            echo "❌ 下载内容不是有效 ZIP，可能拿到的是 HTML 页面："
+            echo "❌ 下载内容不是有效 ZIP，前 500 字节如下："
             head -c 500 "${{ steps.vars.outputs.file }}"
             exit 1
           fi
