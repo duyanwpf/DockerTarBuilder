@@ -1,20 +1,81 @@
-name: Download GDAL from GISInternals
+name: Download GISInternals GDAL
+
 on:
-  push:
-    branches: [ "master" ]   # 仅当推送到 master 分支时触发
+  workflow_dispatch:
+    inputs:
+      build:
+        description: '构建编号（1944=MSVC2022 x64，1929=MSVC2019 x64）'
+        required: true
+        default: '1944'
+      version:
+        description: 'GDAL/MapServer 版本组合'
+        required: true
+        default: 'gdal-3-12-1-mapserver-8-6-0'
+      artifact_name:
+        description: 'Artifact 名称'
+        required: true
+        default: 'gdal-3.12.1-win64'
+
 jobs:
-  download-and-extract:
-    runs-on: ubuntu-latest  # 使用 GitHub 托管的最新版 Ubuntu 运行器
+  download:
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Download GDAL Stable Release
+      - name: 构造文件名与查询地址
+        id: vars
+        run: |
+          FILE="release-${{ github.event.inputs.build }}-x64-${{ github.event.inputs.version }}.zip"
+          QUERY="http://archive.gisinternals.com/query.html?content=filelist&file=${FILE}"
+          echo "file=$FILE"   >> "$GITHUB_OUTPUT"
+          echo "query=$QUERY" >> "$GITHUB_OUTPUT"
+          echo "目标文件: $FILE"
+          echo "查询地址: $QUERY"
+
+      - name: 解析真实下载链接
+        id: resolve
+        run: |
+          curl -L --fail --retry 3 --retry-delay 5 -sS \
+            "${{ steps.vars.outputs.query }}" -o list.html
+
+          if file list.html | grep -qi 'zip archive'; then
+            echo "查询地址直接返回 ZIP，跳过解析"
+            mv list.html "${{ steps.vars.outputs.file }}"
+            echo "already_zip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          REAL_URL=$(grep -oE 'https?://[^"[:space:]]+\.zip' list.html | head -n 1)
+          if [ -z "$REAL_URL" ]; then
+            echo "未能从页面中解析出 ZIP 链接，页面片段如下："
+            head -n 50 list.html
+            exit 1
+          fi
+          echo "real_url=$REAL_URL" >> "$GITHUB_OUTPUT"
+          echo "already_zip=false" >> "$GITHUB_OUTPUT"
+          echo "解析到真实地址: $REAL_URL"
+
+      - name: 下载 ZIP
+        if: steps.resolve.outputs.already_zip != 'true'
         run: |
           curl -L --fail --retry 3 --retry-delay 5 \
-            -o gdal.zip \
-            "http://archive.gisinternals.com/query.html?content=filelist&file=release-1944-x64-gdal-3-12-1-mapserver-8-6-0.zip"
-      
-      - name: Verify download and list files
+            -o "${{ steps.vars.outputs.file }}" \
+            "${{ steps.resolve.outputs.real_url }}"
+          ls -lh "${{ steps.vars.outputs.file }}"
+          file "${{ steps.vars.outputs.file }}"
+
+      - name: 校验 ZIP 完整性
         run: |
-          ls -lh gdal.zip
-          file gdal.zip
+          if ! unzip -t "${{ steps.vars.outputs.file }}" > /dev/null 2>&1; then
+            echo "❌ 下载内容不是有效 ZIP，可能拿到的是 HTML 页面："
+            head -c 500 "${{ steps.vars.outputs.file }}"
+            exit 1
+          fi
+          echo "✅ ZIP 校验通过"
+
+      - name: 上传为 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.artifact_name }}
+          path: ${{ steps.vars.outputs.file }}
+          retention-days: 14
+          overwrite: true
