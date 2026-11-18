@@ -1,40 +1,47 @@
-name: Download GDAL 3.13.x (GISInternals Dev)
+name: Download Fixed GDAL 3.13.3
 
 on:
   workflow_dispatch:
-    inputs:
-      artifact_name:
-        description: 'Artifact 名称'
-        required: true
-        default: 'gdal-3.13.x-win64-dev'
 
 jobs:
   download:
     runs-on: ubuntu-latest
-
     steps:
-      - name: 构造下载地址
-        id: vars
+      # ============================================================
+      # 方案一（默认启用）：使用第三方固定版本 ZIP 包
+      # 链接中明确包含 3.13.3，版本固定，不会滚动更新
+      # ============================================================
+      - name: Download GDAL 3.13.3 (Third-party Fixed ZIP)
+        id: download_zip
         run: |
-          FILE="release-1944-x64-gdal-mapserver.zip"
-          URL="https://download.gisinternals.com/sdk/downloads/${FILE}"
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
-          echo "url=$URL"   >> "$GITHUB_OUTPUT"
-          echo "下载地址: $URL"
+          ZIP_URL="https://github.com/tarekwasfy01/GDAL-3.13.3-Full-Build/releases/download/GDAL-3.13.3-maximal-win-x64/GDAL-3.13.3-maximal-win-x64-release-with-GRASS.zip"
+          echo "下载地址: $ZIP_URL"
+          curl -L --fail --retry 3 --retry-delay 5 -o gdal-3.13.3-win64.zip "$ZIP_URL"
+          echo "downloaded_file=gdal-3.13.3-win64.zip" >> "$GITHUB_OUTPUT"
+          ls -lh gdal-3.13.3-win64.zip
+          file gdal-3.13.3-win64.zip
 
-      - name: 下载 ZIP
-        run: |
-          curl -L --fail --retry 3 --retry-delay 5 \
-            -o "${{ steps.vars.outputs.file }}" \
-            "${{ steps.vars.outputs.url }}"
-          ls -lh "${{ steps.vars.outputs.file }}"
-          file "${{ steps.vars.outputs.file }}"
+      # ============================================================
+      # 备选方案二：GISInternals 的 MSI 安装包
+      # 如果需要 MSI 格式，可以注释掉上面的步骤，取消下面代码的注释
+      # 注意：此链接的可用性可能需要实际验证
+      # ============================================================
+      # - name: Download GDAL 3.13.3 (GISInternals MSI)
+      #   id: download_msi
+      #   run: |
+      #     MSI_URL="https://download.gisinternals.com/sdk/downloads/gdal-3.13.3-1944-x64-core.msi"
+      #     echo "下载地址: $MSI_URL"
+      #     curl -L --fail --retry 3 --retry-delay 5 -o gdal-3.13.3-core.msi "$MSI_URL"
+      #     echo "downloaded_file=gdal-3.13.3-core.msi" >> "$GITHUB_OUTPUT"
+      #     ls -lh gdal-3.13.3-core.msi
+      #     file gdal-3.13.3-core.msi
 
-      - name: 校验 ZIP 完整性
+      - name: 校验下载文件完整性（仅限 ZIP）
+        if: steps.download_zip.outcome == 'success'
         run: |
-          if ! unzip -t "${{ steps.vars.outputs.file }}" > /dev/null 2>&1; then
+          if ! unzip -t gdal-3.13.3-win64.zip > /dev/null 2>&1; then
             echo "❌ 下载内容不是有效 ZIP，前 500 字节如下："
-            head -c 500 "${{ steps.vars.outputs.file }}"
+            head -c 500 gdal-3.13.3-win64.zip
             exit 1
           fi
           echo "✅ ZIP 校验通过"
@@ -42,7 +49,7 @@ jobs:
       - name: 上传为 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.inputs.artifact_name }}
-          path: ${{ steps.vars.outputs.file }}
+          name: gdal-3.13.3-win64
+          path: ${{ steps.download_zip.outputs.downloaded_file || steps.download_msi.outputs.downloaded_file }}
           retention-days: 14
           overwrite: true
