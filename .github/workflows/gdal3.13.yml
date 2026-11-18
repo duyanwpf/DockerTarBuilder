@@ -1,0 +1,48 @@
+name: Download GDAL 3.13.x (GISInternals Dev)
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_name:
+        description: 'Artifact 名称'
+        required: true
+        default: 'gdal-3.13.x-win64-dev'
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 构造下载地址
+        id: vars
+        run: |
+          FILE="release-1944-x64-gdal-mapserver.zip"
+          URL="https://download.gisinternals.com/sdk/downloads/${FILE}"
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "url=$URL"   >> "$GITHUB_OUTPUT"
+          echo "下载地址: $URL"
+
+      - name: 下载 ZIP
+        run: |
+          curl -L --fail --retry 3 --retry-delay 5 \
+            -o "${{ steps.vars.outputs.file }}" \
+            "${{ steps.vars.outputs.url }}"
+          ls -lh "${{ steps.vars.outputs.file }}"
+          file "${{ steps.vars.outputs.file }}"
+
+      - name: 校验 ZIP 完整性
+        run: |
+          if ! unzip -t "${{ steps.vars.outputs.file }}" > /dev/null 2>&1; then
+            echo "❌ 下载内容不是有效 ZIP，前 500 字节如下："
+            head -c 500 "${{ steps.vars.outputs.file }}"
+            exit 1
+          fi
+          echo "✅ ZIP 校验通过"
+
+      - name: 上传为 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.artifact_name }}
+          path: ${{ steps.vars.outputs.file }}
+          retention-days: 14
+          overwrite: true
