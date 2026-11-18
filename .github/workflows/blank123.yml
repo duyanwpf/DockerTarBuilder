@@ -1,0 +1,58 @@
+name: Probe GISInternals Versions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download GISInternals pages
+        run: |
+          mkdir -p gis-pages
+          BASE="http://archive.gisinternals.com"
+
+          echo "正在抓取 Stable Releases..."
+          curl -fsSL --retry 3 -o gis-pages/stable-releases.html "$BASE/release.php" || echo "stable-releases 抓取失败"
+
+          echo "正在抓取 Stable Branches..."
+          curl -fsSL --retry 3 -o gis-pages/stable-branches.html "$BASE/stable.php" || echo "stable-branches 抓取失败"
+
+          echo "正在抓取 Development Versions..."
+          curl -fsSL --retry 3 -o gis-pages/development.html "$BASE/development.php" || echo "development 抓取失败"
+
+          echo "正在抓取 Older Releases (Archive)..."
+          curl -fsSL --retry 3 -o gis-pages/older-releases.html "https://gisinternals.com/archive.php" || echo "older-releases 抓取失败"
+
+          ls -lh gis-pages/
+
+      - name: Parse versions and download links
+        run: |
+          echo "==================== 解析结果 ===================="
+          for f in gis-pages/*.html; do
+            echo ""
+            echo ">>> 文件: $f"
+            # 提取所有 query.html?file= 后面的 .zip 文件名
+            grep -oE 'file=[^&"]+\.zip' "$f" 2>/dev/null | sed 's/file=//' | sort -u | tee "parsed-$(basename $f .html).txt"
+            # 如果当前文件是 older-releases，额外提取 “## GDAL” 开头的版本标题
+            if [[ "$f" == *older-releases* ]]; then
+              echo "--- Older Releases 中的 GDAL 版本标题 ---"
+              grep -oE '^## GDAL [0-9.]+' "$f" 2>/dev/null | sed 's/## //' | sort -V -r | tee -a "parsed-older-releases-titles.txt"
+            fi
+          done
+          echo ""
+          echo "==================================================="
+          echo "解析完成。合并所有解析结果到 parsed-all.txt..."
+          cat parsed-*.txt 2>/dev/null | grep -v '^$' | sort -u > parsed-all.txt || true
+          echo "共发现 $(wc -l < parsed-all.txt) 条唯一记录。"
+          cat parsed-all.txt
+
+      - name: Upload raw HTML and parsed results
+        uses: actions/upload-artifact@v4
+        with:
+          name: gisinternals-probe-results
+          path: |
+            gis-pages/
+            parsed-*.txt
+          retention-days: 7
+          overwrite: true
