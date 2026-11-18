@@ -1,4 +1,4 @@
-name: Download Fixed GDAL 3.13.3
+name: Download Fixed GDAL 3.13.3 (MSI + ZIP + NuGet fallback)
 
 on:
   workflow_dispatch:
@@ -8,48 +8,92 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # ============================================================
-      # 方案一（默认启用）：使用第三方固定版本 ZIP 包
-      # 链接中明确包含 3.13.3，版本固定，不会滚动更新
+      # 尝试 1：GISInternals MSI（core 版本，不含 GRASS）
+      # 文件名中的版本号固定为 3.13.3，但直链可能随时失效
       # ============================================================
-      - name: Download GDAL 3.13.3 (Third-party Fixed ZIP)
-        id: download_zip
+      - name: "Attempt 1: GISInternals MSI (core)"
+        id: msi
+        continue-on-error: true
         run: |
-          ZIP_URL="https://github.com/tarekwasfy01/GDAL-3.13.3-Full-Build/releases/download/GDAL-3.13.3-maximal-win-x64/GDAL-3.13.3-maximal-win-x64-release-with-GRASS.zip"
-          echo "下载地址: $ZIP_URL"
-          curl -L --fail --retry 3 --retry-delay 5 -o gdal-3.13.3-win64.zip "$ZIP_URL"
-          echo "downloaded_file=gdal-3.13.3-win64.zip" >> "$GITHUB_OUTPUT"
-          ls -lh gdal-3.13.3-win64.zip
-          file gdal-3.13.3-win64.zip
+          URL="https://download.gisinternals.com/sdk/downloads/gdal-3.13.3-1944-x64-core.msi"
+          echo "尝试: $URL"
+          if curl -L --fail --retry 2 --retry-delay 3 -o gdal-3.13.3-core.msi "$URL"; then
+            echo "✅ MSI 下载成功"
+            echo "downloaded=true" >> "$GITHUB_OUTPUT"
+            echo "file=gdal-3.13.3-core.msi" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ MSI 直链不可用（预期内，继续尝试其他来源）"
+            echo "downloaded=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # ============================================================
-      # 备选方案二：GISInternals 的 MSI 安装包
-      # 如果需要 MSI 格式，可以注释掉上面的步骤，取消下面代码的注释
-      # 注意：此链接的可用性可能需要实际验证
+      # 尝试 2：GISInternals 固定版本 ZIP
+      # 拼接 release-1944-x64-gdal-3-13-3-mapserver-8-6-0.zip
+      # 若该固定版本 ZIP 不存在，此步骤会失败，但不影响整体流程
       # ============================================================
-      # - name: Download GDAL 3.13.3 (GISInternals MSI)
-      #   id: download_msi
-      #   run: |
-      #     MSI_URL="https://download.gisinternals.com/sdk/downloads/gdal-3.13.3-1944-x64-core.msi"
-      #     echo "下载地址: $MSI_URL"
-      #     curl -L --fail --retry 3 --retry-delay 5 -o gdal-3.13.3-core.msi "$MSI_URL"
-      #     echo "downloaded_file=gdal-3.13.3-core.msi" >> "$GITHUB_OUTPUT"
-      #     ls -lh gdal-3.13.3-core.msi
-      #     file gdal-3.13.3-core.msi
-
-      - name: 校验下载文件完整性（仅限 ZIP）
-        if: steps.download_zip.outcome == 'success'
+      - name: "Attempt 2: GISInternals fixed ZIP"
+        id: zip
+        continue-on-error: true
         run: |
-          if ! unzip -t gdal-3.13.3-win64.zip > /dev/null 2>&1; then
-            echo "❌ 下载内容不是有效 ZIP，前 500 字节如下："
-            head -c 500 gdal-3.13.3-win64.zip
+          URL="https://download.gisinternals.com/sdk/downloads/release-1944-x64-gdal-3-13-3-mapserver-8-6-0.zip"
+          echo "尝试: $URL"
+          if curl -L --fail --retry 2 --retry-delay 3 -o gdal-3.13.3-win64.zip "$URL"; then
+            echo "✅ ZIP 下载成功"
+            # 校验是否为有效 ZIP（防止拿到 HTML 错误页）
+            if unzip -t gdal-3.13.3-win64.zip > /dev/null 2>&1; then
+              echo "✅ ZIP 校验通过"
+              echo "downloaded=true" >> "$GITHUB_OUTPUT"
+              echo "file=gdal-3.13.3-win64.zip" >> "$GITHUB_OUTPUT"
+            else
+              echo "⚠️ 下载内容不是有效 ZIP，标记为失败"
+              rm -f gdal-3.13.3-win64.zip
+              echo "downloaded=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "❌ 固定版本 ZIP 不可用"
+            echo "downloaded=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ============================================================
+      # 回退方案：NuGet Minimal 包（版本锁定 3.13.3.611，明确无 GRASS）
+      # 仅当前两个 GISInternals 来源都失败时才执行
+      # ============================================================
+      - name: "Fallback: NuGet Minimal (3.13.3.611)"
+        id: nuget
+        if: steps.msi.outputs.downloaded != 'true' && steps.zip.outputs.downloaded != 'true'
+        run: |
+          URL="https://www.nuget.org/api/v2/package/MaxRev.Gdal.WindowsRuntime.Minimal/3.13.3.611"
+          echo "回退到 NuGet: $URL"
+          curl -L --fail --retry 3 --retry-delay 5 -o gdal-3.13.3-minimal.nupkg "$URL"
+          echo "✅ NuGet Minimal 包下载成功"
+          echo "downloaded=true" >> "$GITHUB_OUTPUT"
+          echo "file=gdal-3.13.3-minimal.nupkg" >> "$GITHUB_OUTPUT"
+
+      # ============================================================
+      # 汇总最终可用的文件（MSI / ZIP / NuGet 中第一个成功的）
+      # ============================================================
+      - name: Determine final artifact
+        id: final
+        run: |
+          if [ "${{ steps.msi.outputs.downloaded }}" = "true" ]; then
+            echo "file=${{ steps.msi.outputs.file }}" >> "$GITHUB_OUTPUT"
+            echo "type=msi" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.zip.outputs.downloaded }}" = "true" ]; then
+            echo "file=${{ steps.zip.outputs.file }}" >> "$GITHUB_OUTPUT"
+            echo "type=zip" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.nuget.outputs.downloaded }}" = "true" ]; then
+            echo "file=${{ steps.nuget.outputs.file }}" >> "$GITHUB_OUTPUT"
+            echo "type=nupkg" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ 所有下载来源均失败，请检查网络或链接状态。"
             exit 1
           fi
-          echo "✅ ZIP 校验通过"
+          echo "最终文件: ${{ steps.final.outputs.file }}"
 
-      - name: 上传为 Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: gdal-3.13.3-win64
-          path: ${{ steps.download_zip.outputs.downloaded_file || steps.download_msi.outputs.downloaded_file }}
+          path: ${{ steps.final.outputs.file }}
           retention-days: 14
           overwrite: true
